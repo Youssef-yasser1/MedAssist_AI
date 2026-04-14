@@ -4,13 +4,11 @@ import torch
 import google.generativeai as genai
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
-import io
 
-# 1. تعريف التطبيق (ده اللي كان ناقص ومسبب الإيرور)
+# 1. أهم سطر: تعريف الـ app لازم يكون فوق خالص
 app = FastAPI()
 
-# 2. تفعيل الـ CORS عشان موقع Lovable يقدر يكلم السيرفر من غير حظر
+# 2. تفعيل الـ CORS عشان Lovable يقدر يكلم السيرفر
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,34 +17,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 3. إعداد مفتاح Gemini من الـ Secrets اللي حطيناها في Hugging Face
+# 3. إعداد Gemini (بيقرأ المفتاح من الـ Secrets أوتوماتيك)
 api_key = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=api_key)
 model_gemini = genai.GenerativeModel('gemini-1.5-flash')
 
-# 4. تحميل قاعدة بيانات الأمراض (تأكد أن اسم الملف صح)
-try:
-    with open('chest_diseases_db_v2.json', 'r', encoding='utf-8') as f:
-        diseases_db = json.load(f)
-except Exception as e:
-    print(f"Error loading JSON: {e}")
-    diseases_db = {}
-
-# 5. تحميل موديل الـ AI بتاع الأشعة (Torch)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# تأكد أن اسم الملف best_densenet121.pth موجود فعلاً في الـ Space
-try:
-    # هنا بنفترض إنك هتعمل تحميل للموديل، لو مش محتاجه في الـ API حالياً ممكن تمسح السطر ده
-    # checkpoint = torch.load('best_densenet121.pth', map_location=device)
-    print("Model loaded successfully!")
-except Exception as e:
-    print(f"Model loading skipped or error: {e}")
-
-# --- الـ Endpoints ---
-
+# 4. الـ Endpoints
 @app.get("/")
 def home():
-    return {"status": "MedAssist AI Backend is Running!"}
+    return {"status": "MedAssist AI is Online!"}
 
 @app.post("/chat")
 async def chat_endpoint(request: Request):
@@ -55,19 +34,12 @@ async def chat_endpoint(request: Request):
         user_message = data.get("message", "")
         
         if not user_message:
-            return {"response": "أهلاً بك، كيف يمكنني مساعدتك اليوم؟"}
+            return {"response": "أهلاً بك في Healytics، كيف أساعدك؟"}
 
         # إرسال الرسالة لـ Gemini
-        # ممكن تضيف برومبت هنا عشان تخليه يرد كطبيب متخصص
-        full_prompt = f"أنت مساعد طبي ذكي في نظام Healytics. أجب على السؤال التالي: {user_message}"
+        full_prompt = f"أنت مساعد طبي ذكي. أجب باختصار: {user_message}"
         response = model_gemini.generate_content(full_prompt)
         
         return {"response": response.text}
-    
     except Exception as e:
-        return {"error": str(e), "response": "عذراً، حدث خطأ في معالجة طلبك."}
-
-# تشغيل السيرفر (مهم جداً للـ Docker)
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+        return {"error": str(e), "response": "حدث خطأ في النظام."}
