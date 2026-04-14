@@ -1,0 +1,4 @@
+pass.env
+.venv/
+__pycache__/
+*.pth
