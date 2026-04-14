@@ -33,10 +33,16 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def load_medical_model():
     model = models.densenet121(weights=None)
     num_ftrs = model.classifier.in_features
-    # افترضنا هنا 14 تصنيف للأمراض (NIH dataset) - غير الرقم لو عندك مختلف
-    model.classifier = nn.Linear(num_ftrs, 14) 
+    
+    # التعديل هنا: غيرنا الـ classifier عشان يطابق الملف بتاعك
+    # إحنا بنخليه Sequential وبنحط Linear في الخانة رقم 1
+    model.classifier = nn.Sequential(
+        nn.Dropout(0.2), # ده بياخد مكان 0
+        nn.Linear(num_ftrs, 14) # وده بياخد مكان 1 اللي الإيرور عايزه
+    )
     
     if os.path.exists('best_densenet121.pth'):
+        # إضافة ميزة الأمان للأوزان
         checkpoint = torch.load('best_densenet121.pth', map_location=device)
         model.load_state_dict(checkpoint)
         model.to(device)
@@ -44,7 +50,7 @@ def load_medical_model():
         print("✅ Medical Model Loaded Successfully!")
         return model
     else:
-        print("⚠️ Model file not found, running in Text-Only mode.")
+        print("⚠️ Model file not found!")
         return None
 
 medical_model = load_medical_model()
