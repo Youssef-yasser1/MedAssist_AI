@@ -57,7 +57,7 @@ async def chat_endpoint(request: Request):
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key: return {"response": "API Key Missing from Secrets!"}
         genai.configure(api_key=api_key)
-        model_gemini = genai.GenerativeModel('gemini-1.5-flash')
+        model_gemini = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
         # 1️⃣ حالة الأشعة (السيستم الداخلي + Gemini)
         if image_data and medical_model:

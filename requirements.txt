@@ -1,7 +1,7 @@
 fastapi
 uvicorn
+google-generativeai>=0.7.2
 torch
 torchvision
-python-multipart
-google-generativeai
 pillow
+python-multipart
