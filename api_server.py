@@ -2,12 +2,12 @@ import os
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
-import google.generativeai as genai
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import io
 import base64
+import requests  # هنستخدم دي عشان نكلم جوجل مباشرة
 
 app = FastAPI()
 
@@ -18,7 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- إعداد الموديل المحلي ---
+# --- الموديل المحلي (DenseNet) ---
 device = torch.device("cpu")
 def load_medical_model():
     model = models.densenet121(weights=None)
@@ -33,34 +33,64 @@ def load_medical_model():
     return None
 
 medical_model = load_medical_model()
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
+class_names = ["Atelectasis", "Cardiomegaly", "Effusion", "Infiltration", "Mass", "Nodule", "Pneumonia", "Pneumothorax", "Consolidation", "Edema", "Emphysema", "Fibrosis", "Pleural_Thickening", "Hernia"]
+
+# دالة ذكية لإرسال النص لجوجل بدون مكتبة (عشان نتفادى الـ 404)
+def ask_gemini_direct(prompt, api_key):
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    headers = {'Content-Type': 'application/json'}
+    response = requests.post(url, json=payload, headers=headers)
+    
+    if response.status_code == 200:
+        return response.json()['candidates'][0]['content']['parts'][0]['text']
+    else:
+        return f"Error from Google API: {response.status_code} - {response.text}"
 
 @app.post("/chat")
 async def chat_endpoint(request: Request):
     try:
         data = await request.json()
+        api_key = os.getenv("GEMINI_API_KEY")
         
-        # 🎯 الصيد الصحيح بناءً على اللوجز بتاعتك:
-        # لوفابل بيبعت داتا شكلها كدة: {'messages': [{'role': 'user', 'content': 'انا يوسف'}]}
+        # التقاط الرسالة من Lovable
         user_message = ""
         if "messages" in data and len(data["messages"]) > 0:
             user_message = data["messages"][-1].get("content", "")
-        
+        elif "message" in data:
+            user_message = data["message"]
+            
         image_data = data.get("image")
-        
-        api_key = os.getenv("GEMINI_API_KEY")
-        
-        # 🛑 إجبار Gemini على استخدام النسخة المستقرة v1 للهروب من الـ 404
-        genai.configure(api_key=api_key, transport='rest')
-        # هنا التكة: بنحدد الموديل بدون أي مقدمات Beta
-        model = genai.GenerativeModel('gemini-1.5-flash')
 
+        # 1. لو فيه صورة
+        if image_data and medical_model:
+            encoded = image_data.split(",", 1)[1] if "," in image_data else image_data
+            image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert('RGB')
+            input_tensor = transform(image).unsqueeze(0).to(device)
+            with torch.no_grad():
+                outputs = medical_model(input_tensor)
+                probs = torch.sigmoid(outputs)
+                preds = (probs > 0.5).nonzero(as_tuple=True)[1]
+                diseases = [class_names[i] for i in preds]
+            
+            res_text = ", ".join(diseases) if diseases else "نتائج سليمة"
+            prompt = f"المريض رفع أشعة والتحليل الأولي: {res_text}. اشرح ده بالعربي باختصار وبأسلوب طبي."
+            ai_response = ask_gemini_direct(prompt, api_key)
+            return {"response": ai_response, "analysis": diseases}
+
+        # 2. لو نص بس (زي كلمة كحة)
         if user_message:
-            # رد Gemini بذكاء
-            response = model.generate_content(f"أنت مساعد طبي في نظام Healytics. المريض يقول: {user_message}. رد عليه بالعربي.")
-            return {"response": response.text}
-        
-        return {"response": "أهلاً بك في Healytics، كيف يمكنني مساعدتك؟"}
+            ai_response = ask_gemini_direct(f"أنت مساعد طبي في Healytics. رد بالعربي على: {user_message}", api_key)
+            return {"response": ai_response}
+
+        return {"response": "أهلاً بك في Healytics! كيف يمكنني مساعدتك؟"}
 
     except Exception as e:
-        # لو حصل إيرور هيطلع لنا هنا بالتفصيل
-        return {"response": f"خطأ في السيرفر: {str(e)}"}
+        return {"response": f"حدث خطأ في النظام: {str(e)}"}
