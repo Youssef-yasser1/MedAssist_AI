@@ -18,7 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- إعدادات سريعة للموديل المحلي ---
+# --- إعداد الموديل المحلي ---
 device = torch.device("cpu")
 def load_medical_model():
     model = models.densenet121(weights=None)
@@ -37,29 +37,30 @@ medical_model = load_medical_model()
 @app.post("/chat")
 async def chat_endpoint(request: Request):
     try:
-        raw_data = await request.json()
-        # أهم سطر: هنطبع اللي Lovable بيبعته عشان نشوفه في الـ Logs
-        print(f"DEBUG: Data from Lovable: {raw_data}")
-
-        # محاولة استخراج الرسالة بكل الطرق
-        user_message = raw_data.get("message") or raw_data.get("prompt") or ""
-        if not user_message and "messages" in raw_data:
-            user_message = raw_data["messages"][-1].get("content", "")
-
+        data = await request.json()
+        
+        # 🎯 الصيد الصحيح بناءً على اللوجز بتاعتك:
+        # لوفابل بيبعت داتا شكلها كدة: {'messages': [{'role': 'user', 'content': 'انا يوسف'}]}
+        user_message = ""
+        if "messages" in data and len(data["messages"]) > 0:
+            user_message = data["messages"][-1].get("content", "")
+        
+        image_data = data.get("image")
+        
         api_key = os.getenv("GEMINI_API_KEY")
         
-        # --- الطريقة اليدوية لضمان عدم حدوث 404 ---
-        genai.configure(api_key=api_key)
-        # جرب نكتب اسم الموديل بالكامل بالمسار بتاعه
-        model = genai.GenerativeModel('models/gemini-1.5-flash')
+        # 🛑 إجبار Gemini على استخدام النسخة المستقرة v1 للهروب من الـ 404
+        genai.configure(api_key=api_key, transport='rest')
+        # هنا التكة: بنحدد الموديل بدون أي مقدمات Beta
+        model = genai.GenerativeModel('gemini-1.5-flash')
 
         if user_message:
-            # تجربة إرسال النص
-            response = model.generate_content(f"أجب باختصار بالعربي: {user_message}")
+            # رد Gemini بذكاء
+            response = model.generate_content(f"أنت مساعد طبي في نظام Healytics. المريض يقول: {user_message}. رد عليه بالعربي.")
             return {"response": response.text}
         
-        return {"response": f"وصلتني رسالة فاضية! الداتا اللي جاتلي هي: {str(raw_data)}"}
+        return {"response": "أهلاً بك في Healytics، كيف يمكنني مساعدتك؟"}
 
     except Exception as e:
-        # لو حصل 404 تاني، اطبعه هنا بالتفصيل
-        return {"response": f"حصل إيرور جديد: {str(e)}"}
+        # لو حصل إيرور هيطلع لنا هنا بالتفصيل
+        return {"response": f"خطأ في السيرفر: {str(e)}"}
