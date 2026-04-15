@@ -18,63 +18,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# تحميل موديل الأشعة
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# --- إعدادات سريعة للموديل المحلي ---
+device = torch.device("cpu")
 def load_medical_model():
     model = models.densenet121(weights=None)
     model.classifier = nn.Sequential(nn.Dropout(0.2), nn.Linear(model.classifier.in_features, 14))
     if os.path.exists('best_densenet121.pth'):
-        checkpoint = torch.load('best_densenet121.pth', map_location=device)
-        model.load_state_dict(checkpoint)
-        model.to(device).eval()
-        return model
+        try:
+            checkpoint = torch.load('best_densenet121.pth', map_location=device)
+            model.load_state_dict(checkpoint)
+            model.eval()
+            return model
+        except: return None
     return None
 
 medical_model = load_medical_model()
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
-class_names = ["Atelectasis", "Cardiomegaly", "Effusion", "Infiltration", "Mass", "Nodule", "Pneumonia", "Pneumothorax", "Consolidation", "Edema", "Emphysema", "Fibrosis", "Pleural_Thickening", "Hernia"]
 
 @app.post("/chat")
 async def chat_endpoint(request: Request):
     try:
-        data = await request.json()
-        user_message = data.get("message") or data.get("prompt")
-        image_data = data.get("image")
-        
+        raw_data = await request.json()
+        # أهم سطر: هنطبع اللي Lovable بيبعته عشان نشوفه في الـ Logs
+        print(f"DEBUG: Data from Lovable: {raw_data}")
+
+        # محاولة استخراج الرسالة بكل الطرق
+        user_message = raw_data.get("message") or raw_data.get("prompt") or ""
+        if not user_message and "messages" in raw_data:
+            user_message = raw_data["messages"][-1].get("content", "")
+
         api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key: return {"response": "API Key Missing!"}
+        
+        # --- الطريقة اليدوية لضمان عدم حدوث 404 ---
+        genai.configure(api_key=api_key)
+        # جرب نكتب اسم الموديل بالكامل بالمسار بتاعه
+        model = genai.GenerativeModel('models/gemini-1.5-flash')
 
-        # الضبط الصحيح لتجنب 404
-        genai.configure(api_key=api_key, transport='rest')
-        # تحديد الموديل بدون أي زوائد
-        model_gemini = genai.GenerativeModel('gemini-1.5-flash')
-
-        # حالة الأشعة
-        if image_data and medical_model:
-            encoded = image_data.split(",", 1)[1] if "," in image_data else image_data
-            image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert('RGB')
-            input_tensor = transform(image).unsqueeze(0).to(device)
-            with torch.no_grad():
-                outputs = medical_model(input_tensor)
-                probs = torch.sigmoid(outputs)
-                preds = (probs > 0.5).nonzero(as_tuple=True)[1]
-                diseases = [class_names[i] for i in preds]
-            
-            res_text = ", ".join(diseases) if diseases else "نتائج سليمة"
-            prompt = f"المريض رفع أشعة والتحليل هو: {res_text}. اشرح ده بالعربي بأسلوب طبي مطمئن."
-            response = model_gemini.generate_content(prompt)
-            return {"response": response.text, "analysis": diseases, "confidence": round(float(probs.max()), 2)}
-
-        # حالة النص
         if user_message:
-            response = model_gemini.generate_content(user_message)
+            # تجربة إرسال النص
+            response = model.generate_content(f"أجب باختصار بالعربي: {user_message}")
             return {"response": response.text}
-
-        return {"response": "أهلاً بك في Healytics!"}
+        
+        return {"response": f"وصلتني رسالة فاضية! الداتا اللي جاتلي هي: {str(raw_data)}"}
 
     except Exception as e:
-        return {"response": f"Error: {str(e)}"}
+        # لو حصل 404 تاني، اطبعه هنا بالتفصيل
+        return {"response": f"حصل إيرور جديد: {str(e)}"}
